@@ -1,7 +1,6 @@
 -module(main).
 -export([start/2, factory/2, conveyor_belt/2, truck/2]).
 -define(TRUCK_CAPACITY, 8).
--define(SIZE, 1).
 
 factory(NumberPackages, Belts) ->
   %% Send packages conveyor belts
@@ -9,8 +8,9 @@ factory(NumberPackages, Belts) ->
     fun(PackageId) ->
       BeltIndex = ((PackageId -1) rem length(Belts)) + 1,
       {Belt, BeltId} = lists:nth(BeltIndex, Belts), % Select a belt (round-robin)
+      Size = rand:uniform(?TRUCK_CAPACITY), % Generate a random size between 1 and Truck Capacity
       io:format("[Factory] Package ~p sent to belt ~p.~n", [PackageId, BeltId]),
-      Belt ! {package, PackageId, ?SIZE}
+      Belt ! {package, PackageId, Size}
     end,
     lists:seq(1, NumberPackages)
   ),
@@ -37,7 +37,7 @@ truck(CurrentLoad, TruckId) ->
   receive
     {package, PackageId, Size} ->
       NewLoad = CurrentLoad + Size,
-      handle_package(NewLoad, PackageId, TruckId);
+      handle_package(NewLoad, PackageId, TruckId, Size);
 
     terminate ->
       handle_termination(CurrentLoad, TruckId)
@@ -52,13 +52,18 @@ handle_termination(CurrentLoad, TruckId) ->
   io:format("[Truck ~p] End of distribution.~n", [TruckId]).
 
 %% Handle package
-handle_package(NewLoad, PackageId, TruckId) when NewLoad == ?TRUCK_CAPACITY ->
-  io:format("[Truck ~p] Package ~p received, full, sending truck.~n", [TruckId, PackageId]),
-  io:format("[Truck ~p] Sent with capacity ~p/~p.~n", [TruckId, NewLoad, ?TRUCK_CAPACITY]),
+handle_package(NewLoad, PackageId, TruckId, Size) when NewLoad == ?TRUCK_CAPACITY ->
+  io:format("[Truck ~p] Received package ~p with size ~p. Sending truck with capacity ~p/~p.~n",
+    [TruckId, PackageId, Size, ?TRUCK_CAPACITY, ?TRUCK_CAPACITY]),
   truck(0, TruckId);
 
-handle_package(NewLoad, PackageId, TruckId) ->
-  io:format("[Truck ~p] Package ~p received, capacity ~p/~p.~n", [TruckId, PackageId, NewLoad, ?TRUCK_CAPACITY]),
+handle_package(NewLoad, PackageId, TruckId, Size) when NewLoad > ?TRUCK_CAPACITY ->
+  io:format("[Truck ~p] No space for package ~p with size ~p. Sending truck with capacity ~p/~p.~n",
+    [TruckId, PackageId, Size, NewLoad - Size, ?TRUCK_CAPACITY]),
+  handle_package(Size, PackageId, TruckId, Size);
+
+handle_package(NewLoad, PackageId, TruckId, Size) ->
+  io:format("[Truck ~p] Received package ~p with size ~p, capacity ~p/~p.~n", [TruckId, PackageId, Size, NewLoad, ?TRUCK_CAPACITY]),
   truck(NewLoad, TruckId).
 
 start(NumberPackages, NumberTrucks) ->
