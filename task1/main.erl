@@ -1,69 +1,70 @@
 -module(main).
--export([start/3, factory/2, conveyor_belt/1, truck/2]).
+-export([start/2, factory/2, conveyor_belt/2, truck/1]).
+-define(TRUCK_CAPACITY, 8).
 
 factory(NumberPackages, Belts) ->
   %% Send packages conveyor belts
   lists:foreach(
     fun(Id) ->
-      Belt = lists:nth((Id rem length(Belts)) + 1, Belts), % Select a belt (round-robin)
-      io:format("[Factory] Package ~p sent to belt ~p~n", [Id, Belt]),
+      BeltIndex = (Id rem length(Belts)) + 1,
+      {Belt, BeltId} = lists:nth(BeltIndex, Belts), % Select a belt (round-robin)
+      io:format("[Factory] Package ~p sent to belt ~p~n", [Id, BeltId]),
       Belt ! {package, Id, 1}
     end,
     lists:seq(1, NumberPackages)
   ),
 
   %End
-  lists:foreach(fun(Belt) -> Belt ! {terminate} end, Belts),
+  lists:foreach(fun({Belt, _}) -> Belt ! {terminate} end, Belts),
   io:format("[Factory] End of production~n").
 
 %% Conveyor Belt Process
-conveyor_belt(Truck) ->
+conveyor_belt(BeltId, Truck) ->
   receive
     {terminate} ->
-      %% Termination signal received
-      io:format("[Conveyor Belt] Turned off~n"),
+      io:format("[Belt ~p] Turned off~n", [BeltId]),
       Truck ! {terminate};
+
     {package, Id, Size} ->
-      %% Forward package to truck
-      io:format("[Conveyor Belt] Package ~p received~n", [Id]),
+      io:format("[Belt ~p] Package ~p received~n", [BeltId, Id]),
+
       Truck ! {package, Id, Size},
-      conveyor_belt(Truck)
+      conveyor_belt(BeltId, Truck)
   end.
 
 %% Truck Process
-truck(TruckCapacity, CurrentLoad) ->
+truck(CurrentLoad) ->
   receive
     {terminate} ->
-      %% Termination signal received
-      if
-        CurrentLoad > 0 ->
-          io:format("[Truck] Sent with capacity ~p/~p~n", [CurrentLoad, TruckCapacity]);
-        true -> ok
-      end,
-      io:format("[Truck] End of distribution~n");
+      handle_termination(CurrentLoad);
     {package, Id, Size} ->
       NewLoad = CurrentLoad + Size,
-      if
-        NewLoad > TruckCapacity ->
-          %% Truck is over capacity, send it and start fresh
-          io:format("[Truck] Sent with capacity ~p/~p~n", [CurrentLoad, TruckCapacity]),
-          truck(TruckCapacity, Size);
-        NewLoad == TruckCapacity ->
-          %% Truck is full, send it
-          io:format("[Truck] Package ~p received, full, sending truck~n", [Id]),
-          io:format("[Truck] Sent with capacity ~p/~p~n", [NewLoad, TruckCapacity]),
-          truck(TruckCapacity, 0);
-        true ->
-          %% Truck is still loading
-          io:format("[Truck] Package ~p received, capacity ~p/~p~n", [Id, NewLoad, TruckCapacity]),
-          truck(TruckCapacity, NewLoad)
-      end
+      handle_package(NewLoad, Id)
   end.
 
-start(NumberPackages, NumberTrucks, TruckCapacity) ->
+%% Handle termination signal
+handle_termination(CurrentLoad) ->
+  case CurrentLoad of
+    0 -> ok;
+    _ -> io:format("[Truck] Sent with capacity ~p/~p~n", [CurrentLoad, ?TRUCK_CAPACITY])
+  end,
+  io:format("[Truck] End of distribution~n").
 
-  Trucks = [spawn(?MODULE, truck, [TruckCapacity, 0]) || _ <- lists:seq(1, NumberTrucks)],
+%% Handle package
+handle_package(NewLoad, Id) when NewLoad == ?TRUCK_CAPACITY ->
+  io:format("[Truck] Package ~p received, full, sending truck~n", [Id]),
+  io:format("[Truck] Sent with capacity ~p/~p~n", [NewLoad, ?TRUCK_CAPACITY]),
+  truck(0);
 
-  Belts = [spawn(?MODULE, conveyor_belt, [Truck]) || Truck <- Trucks],
+handle_package(NewLoad, Id) ->
+  io:format("[Truck] Package ~p received, capacity ~p/~p~n", [Id, NewLoad, ?TRUCK_CAPACITY]),
+  truck(NewLoad).
+
+
+start(NumberPackages, NumberTrucks) ->
+
+  Trucks = [spawn(?MODULE, truck, [0]) || _ <- lists:seq(1, NumberTrucks)],
+
+  Belts = [{spawn(?MODULE, conveyor_belt, [BeltId, Truck]), BeltId} || {BeltId, Truck} <- lists:zip(lists:seq(1, NumberTrucks), Trucks)],
 
   spawn(?MODULE, factory, [NumberPackages, Belts]).
